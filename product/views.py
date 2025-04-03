@@ -2,11 +2,14 @@ from django.shortcuts import render , get_object_or_404
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework import status
 from rest_framework.response import Response
-from .serializers import ProductSerializer
+from .serializers import *
 from .models import *
 from .filters import ProductFilter
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import IsAuthenticated 
+from django.db.models import Avg
+# from django.views.decorators.csrf import csrf_exempt
+
 
 
 # Create your views here.
@@ -77,11 +80,60 @@ def delete_product(request , pk):
         return Response({"error":"Sorry you are not allowed to delete this product"}
                         , status=status.HTTP_403_FORBIDDEN)
 
-
-
     product.delete()
 
     return Response({"message":"Product deleted successfully"} , status=status.HTTP_200_OK)
     
 
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def add_review(request , pk):
+    product = get_object_or_404(Product , id = pk)
+    user = request.user
+    data = request.data
+    review = product.reviews.filter(user=user)
+    # serializer = ReviewSerializer(data=data)
+    if data['rating']<=0 or data['rating']>5:
+        return Response({"error":"Rating should be between 0 and 5"} , status=status.HTTP_400_BAD_REQUEST)
 
+    elif review.exists():
+        new_review = {'rating':data['rating'] , 'comment':data['comment']}
+        review.update(**new_review)
+
+        rating = product.reviews.aggregate(avg_ratings = Avg('rating'))
+        product.rating = rating['avg_ratings']
+        product.save()
+
+        return Response({'details' : 'Review updated successfully'})
+    
+    else:
+        Review.objects.create(
+            user = user,
+            product = product,
+            rating = data['rating'],
+            comment = data['comment']
+        )
+        rating = product.reviews.aggregate(avg_ratings = Avg('rating'))
+        product.rating = rating['avg_ratings']
+        product.save()
+        return Response({'details' : 'Review added successfully'})
+
+# @csrf_exempt
+@api_view(['DELETE'])
+@permission_classes([IsAuthenticated])
+def delete_review(request , pk):
+    user = request.user
+    product = get_object_or_404(Product , id = pk)
+    
+    review = product.reviews.filter(user=user)
+
+    if review.exists():
+        review.delete()
+        rating = product.reviews.aggregate(avg_ratings = Avg('rating'))
+        if rating['avg_ratings'] is None:
+            rating ['avg_ratings'] = 0
+        product.rating = rating['avg_ratings']
+        product.save()
+        return Response({'details' : 'Review deleted successfully'})
+    else:
+        return Response({'error' : 'Review does not exist'} , status=status.HTTP_404_NOT_FOUND)
